@@ -1,0 +1,6 @@
+#requirements
+streamlit
+yfinance
+pandas
+numpy
+plotly
