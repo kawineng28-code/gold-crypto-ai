@@ -1,6 +1,7 @@
 import time
 import json
 import os
+import re
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,11 +11,19 @@ import streamlit.components.v1 as components
 import yfinance as yf
 from datetime import datetime
 
+try:
+    import requests
+except Exception:
+    requests = None
+
 TROY_OZ_TO_GRAM = 31.1035
 THAI_BAHT_GOLD_GRAM = 15.244
 PURITY_965 = 0.965
 ALERT_FILE = "alerts.json"
 WATCH_FILE = "watchlist.json"
+ARR_URL = "https://online.arrgoldsaving.com"
+AURORA_URL = "https://aurora.co.th/gold-price"
+GOLDTRADERS_URL = "https://www.goldtraders.or.th/"
 
 GOLD_PRESETS = {
     "GC=F": "GC=F - Gold Futures",
@@ -22,7 +31,7 @@ GOLD_PRESETS = {
     "IAU": "IAU - iShares Gold Trust",
     "GOLD": "GOLD - Barrick Mining",
 }
-DEFAULT_CRYPTO_COINS = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD"]
+DEFAULT_CRYPTO_COINS = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "DOGE-USD"]
 OVERLAY_OPTIONS = ["SMA 20", "SMA 50", "SMA 200", "EMA 20", "EMA 50", "Bollinger Bands", "VWAP", "Parabolic SAR", "Pivot Points", "Auto Support/Resistance"]
 PANEL_OPTIONS = ["RSI (14)", "MACD (12, 26, 9)", "Stochastic (%K, %D)", "ATR (14)", "ADX (14)", "OBV", "Volume"]
 
@@ -33,7 +42,6 @@ st.markdown("""
 .block-container { padding-top: 1.2rem; padding-bottom: 1rem; max-width: 1280px; }
 div[data-testid="stMetric"] { background: #FFFFFF; border-radius: 14px; padding: 12px 14px; border: 1px solid #EDEFF3; }
 div[data-testid="stExpander"] { background: #FFFFFF; border-radius: 12px; border: 1px solid #EDEFF3; }
-/* แท็บด้านล่างกราฟ เลื่อนซ้ายขวาได้ */
 div[data-testid="stTabs"] > div:first-child { overflow-x: auto !important; overflow-y: hidden !important; white-space: nowrap !important; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
 div[data-testid="stTabs"] > div:first-child::-webkit-scrollbar { height: 6px; }
 div[data-testid="stTabs"] > div:first-child::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 999px; }
@@ -51,7 +59,6 @@ if "ai_ticker" not in st.session_state:
 if "last_alert_times" not in st.session_state:
     st.session_state.last_alert_times = {}
 
-# รับค่าเหรียญที่เพิ่งเพิ่ม ต้องทำก่อนสร้างกล่อง selectbox เสมอ
 if "pending_coin" in st.session_state:
     st.session_state.selected_coin = st.session_state.pop("pending_coin")
 
@@ -70,6 +77,78 @@ def to_thb_value(usd_price: float, usd_thb: float, is_gold_spot: bool) -> float:
     if is_gold_spot:
         return calc_thai_gold_965_per_baht(usd_price, usd_thb)
     return usd_price * usd_thb
+
+# ---------- ราคาทอง ARR / Aurora / สมาคม ----------
+def _parse_thai_number(s):
+    try:
+        return float(str(s).replace(",", "").replace("บาท", "").strip())
+    except Exception:
+        return None
+
+def _find_price_after(text: str, keyword: str):
+    idx = text.find(keyword)
+    if idx == -1:
+        return None
+    snippet = text[idx: idx+800]
+    m = re.search(r"(\d{2},\d{3}(?:\.\d+)?|\d{5,6}(?:\.\d+)?)", snippet)
+    if m:
+        return _parse_thai_number(m.group(1))
+    return None
+
+def _extract_arr_from_html(html: str, source: str):
+    # ลองหาทองแท่งก่อน
+    buy_bar = None
+    sell_bar = None
+    # Aurora: รับซื้อคืน / ขายออก
+    buy_bar = _find_price_after(html, "รับซื้อคืน")
+    sell_bar = _find_price_after(html, "ขายออก")
+    if buy_bar is None:
+        buy_bar = _find_price_after(html, "รับซื้อ")
+    if buy_bar and sell_bar and 30000 < buy_bar < 100000 and 30000 < sell_bar < 100000:
+        return {"buy_bar": buy_bar, "sell_bar": sell_bar, "buy_ornament": None, "sell_ornament": None, "source": source, "updated": datetime.now().strftime("%d/%m/%Y %H:%M")}
+    return None
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_arr_gold_price():
+    if requests is None:
+        return None
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
+    # 1. ลอง ARR ตรงๆ
+    try:
+        r = requests.get(ARR_URL, headers=headers, timeout=10)
+        if r.status_code == 200 and ("รับซื้อ" in r.text or "ขายออก" in r.text):
+            got = _extract_arr_from_html(r.text, "online.arrgoldsaving.com (ARR)")
+            if got:
+                return got
+    except Exception:
+        pass
+    # 2. Aurora หน้า public ราคาทองวันนี้
+    try:
+        r = requests.get(AURORA_URL, headers=headers, timeout=10)
+        if r.status_code == 200:
+            got = _extract_arr_from_html(r.text, "Aurora - aurora.co.th (แม่ของ ARR)")
+            if got:
+                return got
+    except Exception:
+        pass
+    # 3. สมาคมค้าทองคำ - ต้นทางที่ ARR อ้างอิง
+    try:
+        r = requests.get(GOLDTRADERS_URL, headers=headers, timeout=10)
+        if r.status_code == 200:
+            # ในเว็บสมาคม ตารางทองแท่งอยู่ก่อนรูปพรรณ
+            nums = re.findall(r"(\d{2},\d{3}\.\d{2})", r.text)
+            # เอาตัวเลขที่เป็นราคาทองแท่ง 2 ตัวแรกที่อยู่ในช่วง 30k-100k
+            vals = []
+            for n in nums:
+                v = _parse_thai_number(n)
+                if v and 30000 < v < 100000:
+                    vals.append(v)
+            if len(vals) >= 2:
+                # สมาคมเรียง รับซื้อ แล้ว ขายออก
+                return {"buy_bar": vals[0], "sell_bar": vals[1], "buy_ornament": None, "sell_ornament": None, "source": "สมาคมค้าทองคำ - goldtraders.or.th", "updated": datetime.now().strftime("%d/%m/%Y %H:%M")}
+    except Exception:
+        pass
+    return None
 
 def compute_parabolic_sar(high: pd.Series, low: pd.Series, af_start=0.02, af_step=0.02, af_max=0.2) -> pd.Series:
     h = high.to_numpy(dtype=float)
@@ -486,7 +565,7 @@ def fetch_pair_series(sym: str, hist_period: str, bar_interval: str):
 
 ai_left_placeholder = st.sidebar.empty()
 
-def render_ai_left_panel(summary: dict, levels: dict, fx_rate, is_gold_spot: bool, ai_entry_val: float, ai_tp_val: float, ai_sl_val: float, sr_alerts):
+def render_ai_left_panel(summary: dict, levels: dict, fx_rate, is_gold_spot: bool, ai_entry_val: float, ai_tp_val: float, ai_sl_val: float, sr_alerts, arr_correction: float = 1.0, use_arr: bool = False):
     with ai_left_placeholder.container():
         with st.container(border=True):
             st.markdown("### 🤖 AI แนวโน้ม")
@@ -520,8 +599,9 @@ def render_ai_left_panel(summary: dict, levels: dict, fx_rate, is_gold_spot: boo
             rr = (reward / risk) if risk > 0 else 0.0
             c4.metric("R:R", f"1 : {rr:.2f}")
             if fx_rate:
-                tp_thb = to_thb_value(ai_tp_val, fx_rate, is_gold_spot)
-                st.caption(f"TP ~{tp_thb:,.0f} บาท")
+                tp_thb = to_thb_value(ai_tp_val, fx_rate, is_gold_spot) * arr_correction
+                label = "TP ~ (ราคา ARR)" if use_arr else "TP ~"
+                st.caption(f"{label} {tp_thb:,.0f} บาท")
             if sr_alerts:
                 st.warning("🔔 " + sr_alerts[0]["msg"])
             with st.expander("เหตุผล AI"):
@@ -535,6 +615,15 @@ with h1:
 with h2:
     st.markdown("<div style='text-align:right; padding-top:18px;'><span style='background:#DCFCE7; color:#166534; padding:6px 12px; border-radius:999px; font-size:13px;'>● LIVE</span></div>", unsafe_allow_html=True)
 
+# ค่าเริ่มต้น ARR
+use_arr_price = False
+arr_manual_enabled = False
+arr_manual_buy = 0.0
+arr_manual_sell = 0.0
+arr_data = None
+arr_effective_buy = None
+arr_effective_sell = None
+
 with st.sidebar:
     st.markdown("### สินทรัพย์")
     asset_category = st.radio("ประเภท", options=["gold", "crypto"], format_func=lambda x: "🥇 ทองคำ" if x == "gold" else "🪙 คริปโต", index=0, horizontal=True)
@@ -546,6 +635,23 @@ with st.sidebar:
             ticker = custom_gold if custom_gold else "GC=F"
         else:
             ticker = preset_ticker
+        # --- ARR ---
+        with st.expander("🏦 ราคาทอง ARR - online.arrgoldsaving.com", expanded=True):
+            use_arr_price = st.checkbox("ใช้ราคาทอง ARR / Aurora", value=True, key="use_arr_price_chk")
+            arr_data = fetch_arr_gold_price()
+            if arr_data:
+                st.metric("ARR ทองแท่ง ขายออก", f"{arr_data['buy_bar']:,.0f} / {arr_data['sell_bar']:,.0f} บาท", delta=f"รับซื้อ {arr_data['buy_bar']:,.0f}")
+                st.caption(f"ที่มา: {arr_data['source']} • {arr_data['updated']}")
+                st.caption("ARR คือเว็บของร้าน Aurora ราคาอ้างอิงสมาคมค้าทองคำ")
+            else:
+                st.warning("ดึงราคาอัตโนมัติไม่ได้ (เว็บ ARR ต้องล็อกอิน) ให้กรอกเองข้างล่าง")
+            arr_manual_enabled = st.checkbox("กรอกราคา ARR เองจากแอป", value=False, key="arr_manual_chk")
+            if arr_manual_enabled:
+                default_buy = float(arr_data["buy_bar"]) if arr_data else 56950.0
+                default_sell = float(arr_data["sell_bar"]) if arr_data else 57150.0
+                arr_manual_buy = st.number_input("ARR รับซื้อ ทองแท่ง (บาท/บาททอง)", min_value=0.0, value=default_buy, step=10.0, key="arr_manual_buy")
+                arr_manual_sell = st.number_input("ARR ขายออก ทองแท่ง (บาท/บาททอง)", min_value=0.0, value=default_sell, step=10.0, key="arr_manual_sell")
+                st.caption("เปิดแอป online.arrgoldsaving.com ดูหน้า ซื้อ/ขาย แล้วก๊อปเลขมาพิมพ์ตรงนี้")
     else:
         available_coins = list(dict.fromkeys(DEFAULT_CRYPTO_COINS + st.session_state.custom_coins))
         if st.session_state.selected_coin not in available_coins:
@@ -613,7 +719,16 @@ with st.sidebar:
     show_gold_btc_compare = st.checkbox("เปรียบเทียบทอง vs BTC", value=True)
     run_btn = st.button("🔄 ดึงข้อมูลใหม่", type="primary", use_container_width=True)
 
-def build_ai_trade_plan(summary: dict, fx_rate, is_gold_spot: bool, levels: dict):
+# สรุปค่า ARR ที่จะใช้จริง
+if asset_category == "gold" and use_arr_price:
+    if arr_manual_enabled:
+        arr_effective_buy = float(arr_manual_buy) if arr_manual_buy else None
+        arr_effective_sell = float(arr_manual_sell) if arr_manual_sell else None
+    elif arr_data:
+        arr_effective_buy = float(arr_data["buy_bar"])
+        arr_effective_sell = float(arr_data["sell_bar"])
+
+def build_ai_trade_plan(summary: dict, fx_rate, is_gold_spot: bool, levels: dict, arr_correction: float = 1.0, use_arr: bool = False):
     score = summary["ai_score"]
     side = levels["side"]
     st.markdown("#### แผนเทรด AI")
@@ -643,7 +758,9 @@ def build_ai_trade_plan(summary: dict, fx_rate, is_gold_spot: bool, levels: dict
     k2.metric("ขาดทุนถ้าหลุด SL", f"{est_loss_thb:+,.0f} บาท", delta=f"{loss_pct:+.2f}%")
     k3.metric("R:R", f"1 : {rr_ratio:.2f}")
     if fx_rate:
-        st.caption(f"TP เทียบเท่า ~{to_thb_value(tp_input, fx_rate, is_gold_spot):,.0f} บาท")
+        tp_thb = to_thb_value(tp_input, fx_rate, is_gold_spot) * arr_correction
+        label = "TP เทียบเท่า (ราคา ARR)" if use_arr else "TP เทียบเท่า"
+        st.caption(f"{label} ~{tp_thb:,.0f} บาท")
     with st.expander("เหตุผล AI"):
         for r in summary["ai_reasons"]:
             st.write(f"• {r}")
@@ -668,11 +785,17 @@ def render_gold_vs_btc_section(fx_rate):
     rate_val = fx_rate if fx_rate else get_usd_thb()
     spread_pct = b_diff_pct - g_diff_pct
     c1, c2, c3 = st.columns(3)
-    if rate_val:
+    # ถ้าใช้ ARR ให้ทองแสดงราคา ARR
+    if asset_category == "gold" and use_arr_price and arr_effective_sell:
+        c1.metric("ทอง 96.5% (ARR)", f"~{arr_effective_sell:,.0f} บาท", delta=f"{g_diff_pct:+.2f}% (Yahoo)")
+        c1.caption(f"ARR รับซื้อ {arr_effective_buy:,.0f} ขายออก {arr_effective_sell:,.0f}")
+    elif rate_val:
         c1.metric("ทอง 96.5%", f"~{calc_thai_gold_965_per_baht(gold_now, rate_val):,.0f} บาท", delta=f"{g_diff_pct:+.2f}%")
-        c2.metric("BTC", f"~{btc_now * rate_val:,.0f} บาท", delta=f"{b_diff_pct:+.2f}%")
     else:
         c1.metric("ทอง", f"{gold_now:,.2f} USD", delta=f"{g_diff_pct:+.2f}%")
+    if rate_val:
+        c2.metric("BTC", f"~{btc_now * rate_val:,.0f} บาท", delta=f"{b_diff_pct:+.2f}%")
+    else:
         c2.metric("BTC", f"{btc_now:,.2f} USD", delta=f"{b_diff_pct:+.2f}%")
     c3.metric("ส่วนต่าง BTC - Gold", f"{spread_pct:+.2f}%", delta="BTC แรงกว่า" if spread_pct >= 0 else "ทองแกร่งกว่า")
     aligned = pd.DataFrame({"Gold": gold_df["Close"], "BTC": btc_df["Close"]}).dropna()
@@ -690,7 +813,7 @@ def render_gold_vs_btc_section(fx_rate):
         fig2.update_layout(height=360, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig2, use_container_width=True)
 
-def render_watchlist():
+def render_watchlist(key_suffix="top"):
     if asset_category != "crypto" or not st.session_state.custom_coins:
         return
     st.markdown("##### เหรียญที่เพิ่มเอง")
@@ -705,7 +828,7 @@ def render_watchlist():
                     w_pct = ((w_now - w_prev) / w_prev * 100) if w_prev else 0
                     st.metric(coin, f"{w_now:,.4f}" if w_now < 10 else f"{w_now:,.2f}", delta=f"{w_pct:+.2f}%")
                     if coin != ticker:
-                        if st.button("ดูกราฟ", key=f"view_{coin}", use_container_width=True):
+                        if st.button("ดูกราฟ", key=f"view_{coin}_{key_suffix}", use_container_width=True):
                             st.session_state["pending_coin"] = coin
                             st.rerun()
                     else:
@@ -741,9 +864,17 @@ def render_dashboard():
         return
     rate = get_usd_thb() if (show_thb or show_gold_btc_compare or enable_ai_plan) else None
     is_gold_spot = asset_category == "gold" and active_ticker in ("GC=F", "XAUUSD=X")
-    thb_now = to_thb_value(summary["latest_close"], rate, is_gold_spot) if (show_thb and rate) else None
+    thb_now_yahoo = to_thb_value(summary["latest_close"], rate, is_gold_spot) if (show_thb and rate) else None
+    # --- ARR correction ---
+    use_arr_now = (asset_category == "gold" and use_arr_price and arr_effective_sell is not None)
+    arr_correction = 1.0
+    thb_now = thb_now_yahoo
+    if use_arr_now and thb_now_yahoo and thb_now_yahoo > 0:
+        arr_correction = float(arr_effective_sell) / float(thb_now_yahoo)
+        thb_now = float(arr_effective_sell)
     levels = compute_ai_levels(summary, tp_atr_mult, sl_atr_mult)
-    need_reset = (st.session_state.get("ai_ticker") != active_ticker or st.session_state.get("ai_tp_mult") != tp_atr_mult or st.session_state.get("ai_sl_mult") != sl_atr_mult)
+    # รีเซ็ตเมื่อเปลี่ยนเหรียญ / TP / SL / ฝั่ง (แก้บั๊กกำไรติดลบ)
+    need_reset = (st.session_state.get("ai_ticker") != active_ticker or st.session_state.get("ai_tp_mult") != tp_atr_mult or st.session_state.get("ai_sl_mult") != sl_atr_mult or st.session_state.get("ai_side") != levels["side"])
     if need_reset:
         st.session_state["ai_entry"] = float(round(levels["entry"], 2))
         st.session_state["ai_tp"] = float(round(levels["tp"], 2))
@@ -751,6 +882,7 @@ def render_dashboard():
         st.session_state["ai_ticker"] = active_ticker
         st.session_state["ai_tp_mult"] = tp_atr_mult
         st.session_state["ai_sl_mult"] = sl_atr_mult
+        st.session_state["ai_side"] = levels["side"]
     ai_entry_val = float(st.session_state.get("ai_entry", levels["entry"]))
     ai_tp_val = float(st.session_state.get("ai_tp", levels["tp"]))
     ai_sl_val = float(st.session_state.get("ai_sl", levels["sl"]))
@@ -773,7 +905,11 @@ def render_dashboard():
                     trigger_browser_alert(f"{active_ticker} แนวรับต้าน", al["msg"])
                 st.toast(f"🔔 {al['msg']}", icon="🔔")
 
-    render_ai_left_panel(summary, levels, rate, is_gold_spot, ai_entry_val, ai_tp_val, ai_sl_val, sr_alerts)
+    render_ai_left_panel(summary, levels, rate, is_gold_spot, ai_entry_val, ai_tp_val, ai_sl_val, sr_alerts, arr_correction=arr_correction, use_arr=use_arr_now)
+
+    # แบนเนอร์ ARR
+    if use_arr_now:
+        st.success(f"🏦 ราคาทอง ARR (online.arrgoldsaving.com) • ทองแท่ง 96.5% รับซื้อ {arr_effective_buy:,.0f} บาท | ขายออก {arr_effective_sell:,.0f} บาท • ที่มา {arr_data['source'] if arr_data else 'กรอกเอง'} • กราฟและ RSI/MACD ยังใช้ Yahoo คิดอินดิเคเตอร์")
 
     if sr_alerts:
         for al in sr_alerts:
@@ -792,10 +928,13 @@ def render_dashboard():
     with k4:
         st.metric("RSI (14)", f"{summary['rsi']:.1f}" if summary["rsi"] is not None else "N/A")
     if show_thb and rate and thb_now is not None:
-        st.caption(f"USD/THB {rate:.2f} • วันนี้ {summary['today_diff_pct']:+.2f}% • มูลค่าล่าสุด ~{thb_now:,.0f} บาท")
+        if use_arr_now:
+            st.caption(f"USD/THB {rate:.2f} • วันนี้ {summary['today_diff_pct']:+.2f}% • ราคา ARR ล่าสุด ~{thb_now:,.0f} บาท (Yahoo คำนวณได้ ~{thb_now_yahoo:,.0f} บาท)")
+        else:
+            st.caption(f"USD/THB {rate:.2f} • วันนี้ {summary['today_diff_pct']:+.2f}% • มูลค่าล่าสุด ~{thb_now:,.0f} บาท")
 
     render_sr_panel(supports, resistances, summary["latest_close"])
-    render_watchlist()
+    render_watchlist("top")
 
     with st.container(border=True):
         st.markdown(f"### กราฟ {active_ticker} • {interval}")
@@ -881,12 +1020,11 @@ def render_dashboard():
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"แท่งล่าสุด {summary['last_bar_time']} • อัปเดต {summary['fetched_at']} • ATR ±{summary['atr']:.2f}")
 
-    # แท็บด้านล่างกราฟ เลื่อนซ้ายขวาได้
     st.markdown('<div class="scroll-hint">👈 เลื่อนแท็บซ้าย-ขวา 👉 ปัดแถบแท็บเพื่อดูครบทุกหมวด</div>', unsafe_allow_html=True)
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["🤖 AI แผนเทรด", "⚖ ทอง vs BTC", "🔔 ประวัติแจ้งเตือน", "📊 ข้อมูล", "📈 RSI / MACD", "🧱 แนวรับต้าน", "⭐ Watchlist"])
     with tab1:
         if enable_ai_plan:
-            build_ai_trade_plan(summary, rate, is_gold_spot, levels)
+            build_ai_trade_plan(summary, rate, is_gold_spot, levels, arr_correction=arr_correction, use_arr=use_arr_now)
         else:
             st.caption("เปิด AI แผนเทรดในฝั่งซ้าย")
     with tab2:
@@ -911,7 +1049,7 @@ def render_dashboard():
         daily_ohlc["Diff_Pct"] = daily_ohlc["Close"].pct_change() * 100.0
         fx_ref = rate if rate else get_usd_thb()
         if fx_ref:
-            daily_ohlc["Close_THB"] = daily_ohlc["Close"].apply(lambda x: to_thb_value(float(x), fx_ref, is_gold_spot))
+            daily_ohlc["Close_THB"] = daily_ohlc["Close"].apply(lambda x: to_thb_value(float(x), fx_ref, is_gold_spot) * arr_correction if use_arr_now else to_thb_value(float(x), fx_ref, is_gold_spot))
             daily_ohlc["Diff_THB"] = daily_ohlc["Close_THB"].diff()
         show_daily = daily_ohlc.tail(10).sort_index(ascending=False).copy()
         show_daily.index = show_daily.index.strftime("%Y-%m-%d")
@@ -932,7 +1070,7 @@ def render_dashboard():
         render_sr_panel(supports, resistances, summary["latest_close"])
     with tab7:
         if asset_category == "crypto":
-            render_watchlist()
+            render_watchlist("tab7")
             if not st.session_state.custom_coins:
                 st.caption("ยังไม่มีเหรียญที่เพิ่มเอง พิมพ์ชื่อเหรียญในฝั่งซ้ายแล้วกด เพิ่ม ได้เลย")
         else:
@@ -945,6 +1083,7 @@ if run_btn:
     fetch_and_analyze.clear()
     get_usd_thb.clear()
     fetch_pair_series.clear()
+    fetch_arr_gold_price.clear()
     st.rerun()
 if mode == "realtime" and auto_refresh:
     @st.fragment(run_every=refresh_sec)
