@@ -836,42 +836,38 @@ def render_dashboard():
             fig.add_hline(y=ai_tp_val, line_dash="dash", line_width=1.4, line_color="#16A34A", annotation_text=f"TP: {ai_tp_val:,.2f}", row=1, col=1)
             fig.add_hline(y=ai_sl_val, line_dash="dash", line_width=1.4, line_color="#DC2626", annotation_text=f"SL: {ai_sl_val:,.2f}", row=1, col=1)
         fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
-        for idx, panel_name in enumerate(active_panels, start=2):
-            if panel_name == "RSI (14)":
-                fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI", line=dict(color="#F97316", width=1.8)), row=idx, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="#DC2626", opacity=0.6, row=idx, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="#16A34A", opacity=0.6, row=idx, col=1)
-                fig.update_yaxes(title_text="RSI", range=[0, 100], row=idx, col=1)
-            elif panel_name == "MACD (12, 26, 9)":
-                hist_colors = ["#16A34A" if v >= 0 else "#DC2626" for v in df["MACD_HIST"].fillna(0)]
-                fig.add_trace(go.Bar(x=df.index, y=df["MACD_HIST"], name="Hist", marker_color=hist_colors, opacity=0.6), row=idx, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD", line=dict(color="#2563EB", width=1.8)), row=idx, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df["MACD_SIGNAL"], name="Signal", line=dict(color="#F97316", width=1.6, dash="dash")), row=idx, col=1)
-                fig.update_yaxes(title_text="MACD", row=idx, col=1)
-            elif panel_name == "Stochastic (%K, %D)":
-                fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_K"], name="%K", line=dict(color="#0284C7", width=1.6)), row=idx, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_D"], name="%D", line=dict(color="#EA580C", width=1.5, dash="dash")), row=idx, col=1)
-                fig.add_hline(y=80, line_dash="dash", line_color="#DC2626", opacity=0.5, row=idx, col=1)
-                fig.add_hline(y=20, line_dash="dash", line_color="#16A34A", opacity=0.5, row=idx, col=1)
-                fig.update_yaxes(title_text="Stoch", range=[0, 100], row=idx, col=1)
-            elif panel_name == "ATR (14)":
-                fig.add_trace(go.Scatter(x=df.index, y=df["ATR"], name="ATR", line=dict(color="#8B5CF6", width=1.8)), row=idx, col=1)
-                fig.update_yaxes(title_text="ATR", row=idx, col=1)
-            elif panel_name == "ADX (14)":
-                fig.add_trace(go.Scatter(x=df.index, y=df["ADX"], name="ADX", line=dict(color="#111827", width=2.0)), row=idx, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df["PLUS_DI"], name="+DI", line=dict(color="#16A34A", width=1.3, dash="dot")), row=idx, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df["MINUS_DI"], name="-DI", line=dict(color="#DC2626", width=1.3, dash="dot")), row=idx, col=1)
-                fig.add_hline(y=25, line_dash="dash", line_color="#6B7280", opacity=0.6, row=idx, col=1)
-                fig.update_yaxes(title_text="ADX", range=[0, 100], row=idx, col=1)
-            elif panel_name == "OBV":
-                fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#0D9488", width=1.8)), row=idx, col=1)
-                fig.update_yaxes(title_text="OBV", row=idx, col=1)
-            elif panel_name == "Volume":
-                fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color="#64748B", opacity=0.6), row=idx, col=1)
-                fig.update_yaxes(title_text="Vol", row=idx, col=1)
-        fig.update_layout(height=520 + (len(active_panels) * 130), hovermode="x unified", xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"แท่งล่าสุด {summary['last_bar_time']} • อัปเดต {summary['fetched_at']} • ATR ±{summary['atr']:.2f}")
+            # --- Panels ด้านล่างกราฟหลัก ---
+    for idx, panel_name in enumerate(active_panels, start=2):
+        if panel_name == "RSI (14)":
+            fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI", line=dict(color="#2563EB", width=1.8)), row=idx, col=1)
+            fig.add_hline(y=70, line_dash="dash", line_color="#DC2626", opacity=0.6, row=idx, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="#16A34A", opacity=0.6, row=idx, col=1)
+            fig.update_yaxes(title_text="RSI", range=[0, 100], row=idx, col=1)
+        elif panel_name == "Stoch (14,3,3)":
+            fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_K"], name="%K", line=dict(color="#2563EB", width=1.6)), row=idx, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_D"], name="%D", line=dict(color="#DC2626", width=1.6)), row=idx, col=1)
+            fig.add_hline(y=80, line_dash="dash", line_color="#DC2626", opacity=0.5, row=idx, col=1)
+            fig.add_hline(y=20, line_dash="dash", line_color="#16A34A", opacity=0.5, row=idx, col=1)
+            fig.update_yaxes(title_text="Stoch", range=[0, 100], row=idx, col=1)
+        elif panel_name == "ATR (14)":
+            fig.add_trace(go.Scatter(x=df.index, y=df["ATR"], name="ATR", line=dict(color="#8B5CF6", width=1.8)), row=idx, col=1)
+            fig.update_yaxes(title_text="ATR", row=idx, col=1)
+        elif panel_name == "ADX (14)":
+            fig.add_trace(go.Scatter(x=df.index, y=df["ADX"], name="ADX", line=dict(color="#111827", width=2.0)), row=idx, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df["PLUS_DI"], name="+DI", line=dict(color="#16A34A", width=1.3, dash="dot")), row=idx, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df["MINUS_DI"], name="-DI", line=dict(color="#DC2626", width=1.3, dash="dot")), row=idx, col=1)
+            fig.add_hline(y=25, line_dash="dash", line_color="#6B7280", opacity=0.6, row=idx, col=1)
+            fig.update_yaxes(title_text="ADX", range=[0, 100], row=idx, col=1)
+        elif panel_name == "OBV":
+            fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#0D9488", width=1.8)), row=idx, col=1)
+            fig.update_yaxes(title_text="OBV", row=idx, col=1)
+        elif panel_name == "Volume":
+            fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color="#64748B", opacity=0.6), row=idx, col=1)
+            fig.update_yaxes(title_text="Vol", row=idx, col=1)
+
+    fig.update_layout(height=520 + (len(active_panels) * 130), hovermode="x unified", xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(f"แท่งล่าสุด {summary['last_bar_time']} • อัปเดต {summary['fetched_at']} • ATR ±{summary['atr']:.2f}")
 
     tab1, tab2, tab3, tab4 = st.tabs(["🤖 AI แผนเทรด", "⚖ ทอง vs BTC", "🔔 ประวัติแจ้งเตือน", "📊 ข้อมูล"])
     with tab1:
