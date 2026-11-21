@@ -549,7 +549,7 @@ with st.sidebar:
                 if norm_coin:
                     if norm_coin not in DEFAULT_CRYPTO_COINS and norm_coin not in st.session_state.custom_coins:
                         st.session_state.custom_coins.append(norm_coin)
-                    st.session_state.selected_coin = norm_coin
+                    st.session_state["pending_coin"] = norm_coin
                     st.success(f"เพิ่ม {norm_coin} แล้ว")
                     st.rerun()
         with st.expander("🗑 ลบเหรียญ"):
@@ -558,7 +558,7 @@ with st.sidebar:
                 if st.button("ลบ", use_container_width=True):
                     st.session_state.custom_coins.remove(coin_to_del)
                     if st.session_state.selected_coin == coin_to_del:
-                        st.session_state.selected_coin = "BTC-USD"
+                        st.session_state["pending_coin"] = "BTC-USD"
                     st.rerun()
     st.markdown("### ช่วงเวลา")
     mode = st.radio("โหมด", options=["realtime", "daily"], format_func=lambda x: "⚡ เรียลไทม์" if x == "realtime" else "📅 รายวัน", index=0, horizontal=True)
