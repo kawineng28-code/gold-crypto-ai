@@ -33,6 +33,12 @@ st.markdown("""
 .block-container { padding-top: 1.2rem; padding-bottom: 1rem; max-width: 1280px; }
 div[data-testid="stMetric"] { background: #FFFFFF; border-radius: 14px; padding: 12px 14px; border: 1px solid #EDEFF3; }
 div[data-testid="stExpander"] { background: #FFFFFF; border-radius: 12px; border: 1px solid #EDEFF3; }
+/* แท็บด้านล่างกราฟ เลื่อนซ้ายขวาได้ */
+div[data-testid="stTabs"] > div:first-child { overflow-x: auto !important; overflow-y: hidden !important; white-space: nowrap !important; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+div[data-testid="stTabs"] > div:first-child::-webkit-scrollbar { height: 6px; }
+div[data-testid="stTabs"] > div:first-child::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 999px; }
+div[data-testid="stTabs"] button[data-testid="stTab"] { white-space: nowrap !important; flex-shrink: 0 !important; }
+.scroll-hint { font-size: 13px; color: #64748B; margin: 4px 0 2px 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -44,6 +50,10 @@ if "ai_ticker" not in st.session_state:
     st.session_state.ai_ticker = None
 if "last_alert_times" not in st.session_state:
     st.session_state.last_alert_times = {}
+
+# รับค่าเหรียญที่เพิ่งเพิ่ม ต้องทำก่อนสร้างกล่อง selectbox เสมอ
+if "pending_coin" in st.session_state:
+    st.session_state.selected_coin = st.session_state.pop("pending_coin")
 
 def normalize_crypto_symbol(raw: str) -> str:
     sym = raw.strip().upper()
@@ -223,7 +233,6 @@ def compute_ai_levels(summary: dict, tp_mult: float, sl_mult: float) -> dict:
         sl = latest_p - (atr_p * sl_mult)
     return {"side": side, "title": title, "entry": entry, "tp": tp, "sl": sl, "score": score}
 
-# ---------- แนวรับแนวต้าน + แจ้งเตือน ----------
 def compute_sr_levels(df: pd.DataFrame, window: int = 60):
     price = float(df["Close"].iloc[-1])
     recent = df.tail(min(window, len(df)))
@@ -550,7 +559,6 @@ with st.sidebar:
                     if norm_coin not in DEFAULT_CRYPTO_COINS and norm_coin not in st.session_state.custom_coins:
                         st.session_state.custom_coins.append(norm_coin)
                     st.session_state["pending_coin"] = norm_coin
-                    st.success(f"เพิ่ม {norm_coin} แล้ว")
                     st.rerun()
         with st.expander("🗑 ลบเหรียญ"):
             if st.session_state.custom_coins:
@@ -698,7 +706,7 @@ def render_watchlist():
                     st.metric(coin, f"{w_now:,.4f}" if w_now < 10 else f"{w_now:,.2f}", delta=f"{w_pct:+.2f}%")
                     if coin != ticker:
                         if st.button("ดูกราฟ", key=f"view_{coin}", use_container_width=True):
-                            st.session_state.selected_coin = coin
+                            st.session_state["pending_coin"] = coin
                             st.rerun()
                     else:
                         st.caption("กำลังดูอยู่")
@@ -836,40 +844,46 @@ def render_dashboard():
             fig.add_hline(y=ai_tp_val, line_dash="dash", line_width=1.4, line_color="#16A34A", annotation_text=f"TP: {ai_tp_val:,.2f}", row=1, col=1)
             fig.add_hline(y=ai_sl_val, line_dash="dash", line_width=1.4, line_color="#DC2626", annotation_text=f"SL: {ai_sl_val:,.2f}", row=1, col=1)
         fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
-            # --- Panels ด้านล่างกราฟหลัก ---
-    for idx, panel_name in enumerate(active_panels, start=2):
-        if panel_name == "RSI (14)":
-            fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI", line=dict(color="#2563EB", width=1.8)), row=idx, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="#DC2626", opacity=0.6, row=idx, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="#16A34A", opacity=0.6, row=idx, col=1)
-            fig.update_yaxes(title_text="RSI", range=[0, 100], row=idx, col=1)
-        elif panel_name == "Stoch (14,3,3)":
-            fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_K"], name="%K", line=dict(color="#2563EB", width=1.6)), row=idx, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_D"], name="%D", line=dict(color="#DC2626", width=1.6)), row=idx, col=1)
-            fig.add_hline(y=80, line_dash="dash", line_color="#DC2626", opacity=0.5, row=idx, col=1)
-            fig.add_hline(y=20, line_dash="dash", line_color="#16A34A", opacity=0.5, row=idx, col=1)
-            fig.update_yaxes(title_text="Stoch", range=[0, 100], row=idx, col=1)
-        elif panel_name == "ATR (14)":
-            fig.add_trace(go.Scatter(x=df.index, y=df["ATR"], name="ATR", line=dict(color="#8B5CF6", width=1.8)), row=idx, col=1)
-            fig.update_yaxes(title_text="ATR", row=idx, col=1)
-        elif panel_name == "ADX (14)":
-            fig.add_trace(go.Scatter(x=df.index, y=df["ADX"], name="ADX", line=dict(color="#111827", width=2.0)), row=idx, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df["PLUS_DI"], name="+DI", line=dict(color="#16A34A", width=1.3, dash="dot")), row=idx, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df["MINUS_DI"], name="-DI", line=dict(color="#DC2626", width=1.3, dash="dot")), row=idx, col=1)
-            fig.add_hline(y=25, line_dash="dash", line_color="#6B7280", opacity=0.6, row=idx, col=1)
-            fig.update_yaxes(title_text="ADX", range=[0, 100], row=idx, col=1)
-        elif panel_name == "OBV":
-            fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#0D9488", width=1.8)), row=idx, col=1)
-            fig.update_yaxes(title_text="OBV", row=idx, col=1)
-        elif panel_name == "Volume":
-            fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color="#64748B", opacity=0.6), row=idx, col=1)
-            fig.update_yaxes(title_text="Vol", row=idx, col=1)
+        for idx, panel_name in enumerate(active_panels, start=2):
+            if panel_name == "RSI (14)":
+                fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI", line=dict(color="#F97316", width=1.8)), row=idx, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="#DC2626", opacity=0.6, row=idx, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="#16A34A", opacity=0.6, row=idx, col=1)
+                fig.update_yaxes(title_text="RSI", range=[0, 100], row=idx, col=1)
+            elif panel_name == "MACD (12, 26, 9)":
+                hist_colors = ["#16A34A" if v >= 0 else "#DC2626" for v in df["MACD_HIST"].fillna(0)]
+                fig.add_trace(go.Bar(x=df.index, y=df["MACD_HIST"], name="Hist", marker_color=hist_colors, opacity=0.6), row=idx, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD", line=dict(color="#2563EB", width=1.8)), row=idx, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df["MACD_SIGNAL"], name="Signal", line=dict(color="#F97316", width=1.6, dash="dash")), row=idx, col=1)
+                fig.update_yaxes(title_text="MACD", row=idx, col=1)
+            elif panel_name == "Stochastic (%K, %D)":
+                fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_K"], name="%K", line=dict(color="#0284C7", width=1.6)), row=idx, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df["STOCH_D"], name="%D", line=dict(color="#EA580C", width=1.5, dash="dash")), row=idx, col=1)
+                fig.add_hline(y=80, line_dash="dash", line_color="#DC2626", opacity=0.5, row=idx, col=1)
+                fig.add_hline(y=20, line_dash="dash", line_color="#16A34A", opacity=0.5, row=idx, col=1)
+                fig.update_yaxes(title_text="Stoch", range=[0, 100], row=idx, col=1)
+            elif panel_name == "ATR (14)":
+                fig.add_trace(go.Scatter(x=df.index, y=df["ATR"], name="ATR", line=dict(color="#8B5CF6", width=1.8)), row=idx, col=1)
+                fig.update_yaxes(title_text="ATR", row=idx, col=1)
+            elif panel_name == "ADX (14)":
+                fig.add_trace(go.Scatter(x=df.index, y=df["ADX"], name="ADX", line=dict(color="#111827", width=2.0)), row=idx, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df["PLUS_DI"], name="+DI", line=dict(color="#16A34A", width=1.3, dash="dot")), row=idx, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df["MINUS_DI"], name="-DI", line=dict(color="#DC2626", width=1.3, dash="dot")), row=idx, col=1)
+                fig.add_hline(y=25, line_dash="dash", line_color="#6B7280", opacity=0.6, row=idx, col=1)
+                fig.update_yaxes(title_text="ADX", range=[0, 100], row=idx, col=1)
+            elif panel_name == "OBV":
+                fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#0D9488", width=1.8)), row=idx, col=1)
+                fig.update_yaxes(title_text="OBV", row=idx, col=1)
+            elif panel_name == "Volume":
+                fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color="#64748B", opacity=0.6), row=idx, col=1)
+                fig.update_yaxes(title_text="Vol", row=idx, col=1)
+        fig.update_layout(height=520 + (len(active_panels) * 130), hovermode="x unified", xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(f"แท่งล่าสุด {summary['last_bar_time']} • อัปเดต {summary['fetched_at']} • ATR ±{summary['atr']:.2f}")
 
-    fig.update_layout(height=520 + (len(active_panels) * 130), hovermode="x unified", xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"แท่งล่าสุด {summary['last_bar_time']} • อัปเดต {summary['fetched_at']} • ATR ±{summary['atr']:.2f}")
-
-    tab1, tab2, tab3, tab4 = st.tabs(["🤖 AI แผนเทรด", "⚖ ทอง vs BTC", "🔔 ประวัติแจ้งเตือน", "📊 ข้อมูล"])
+    # แท็บด้านล่างกราฟ เลื่อนซ้ายขวาได้
+    st.markdown('<div class="scroll-hint">👈 เลื่อนแท็บซ้าย-ขวา 👉 ปัดแถบแท็บเพื่อดูครบทุกหมวด</div>', unsafe_allow_html=True)
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["🤖 AI แผนเทรด", "⚖ ทอง vs BTC", "🔔 ประวัติแจ้งเตือน", "📊 ข้อมูล", "📈 RSI / MACD", "🧱 แนวรับต้าน", "⭐ Watchlist"])
     with tab1:
         if enable_ai_plan:
             build_ai_trade_plan(summary, rate, is_gold_spot, levels)
@@ -906,6 +920,23 @@ def render_dashboard():
             fmt_dict["Close_THB"] = "{:,.0f}"
             fmt_dict["Diff_THB"] = "{:+,.0f}"
         st.dataframe(show_daily.style.format(fmt_dict), use_container_width=True)
+    with tab5:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("RSI (14)", f"{summary['rsi']:.1f}" if summary["rsi"] is not None else "N/A")
+        c2.metric("MACD", f"{summary['macd']:.2f}" if summary["macd"] is not None else "N/A")
+        c3.metric("Stoch %K", f"{summary['stoch_k']:.1f}" if summary["stoch_k"] is not None else "N/A")
+        c4.metric("ADX (14)", f"{summary['adx']:.1f}" if summary["adx"] is not None else "N/A")
+        st.caption(f"ATR ±{summary['atr']:.2f} • SMA 20 {summary['sma_20']:.2f} • SMA 50 {summary['sma_50']:.2f}" if summary["sma_20"] is not None else "")
+        st.write("ถ้า RSI ต่ำกว่า 30 คือ Oversold ถ้าสูงกว่า 70 คือ Overbought ถ้า ADX สูงกว่า 25 คือเทรนด์เริ่มชัด")
+    with tab6:
+        render_sr_panel(supports, resistances, summary["latest_close"])
+    with tab7:
+        if asset_category == "crypto":
+            render_watchlist()
+            if not st.session_state.custom_coins:
+                st.caption("ยังไม่มีเหรียญที่เพิ่มเอง พิมพ์ชื่อเหรียญในฝั่งซ้ายแล้วกด เพิ่ม ได้เลย")
+        else:
+            st.caption("Watchlist ใช้กับโหมดคริปโต สลับไปโหมดคริปโตในฝั่งซ้ายเพื่อดูเหรียญที่เพิ่มเอง")
 
 if not ticker:
     st.warning("กรุณากรอก Ticker ก่อนครับ")
