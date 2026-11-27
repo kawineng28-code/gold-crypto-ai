@@ -227,14 +227,19 @@ function PhotoBox({photos, setPhotos}){
   const [camOn,setCamOn] = useState(false)
   const [camErr,setCamErr] = useState('')
   const [stream,setStream] = useState(null)
+  const photoKey = (f)=> (f.name||'')+'|'+(f.size||0)+'|'+(f.lastModified||0)
   const addFiles = async (list)=>{
     const arr = Array.from(list||[])
-    for(const f of arr){
-      try{ const small = f.type.startsWith('image/') ? await compressImage(f) : f
-        const preview = URL.createObjectURL(small)
-        setPhotos(prev=>[...prev, {file:small, preview, name:small.name}])
-      }catch{ setPhotos(prev=>[...prev,{file:f, preview:URL.createObjectURL(f), name:f.name}]) }
-    }
+    if(!arr.length) return
+    if(photos.length>=1){ alert('แนบได้ 1 รูปต่อเครื่องเท่านั้น - ถ้าจะเปลี่ยนรูป ให้กดลบรูปเดิมก่อน'); return }
+    if(arr.length>1){ alert('แนบได้ 1 รูปต่อเครื่องเท่านั้น - เลือกมาแค่รูปเดียวครับ'); return }
+    const f = arr[0]
+    const key = photoKey(f)
+    if(photos.some(p=>p.key===key)){ alert('รูปนี้แนบไปแล้วครับ - ห้ามใช้รูปเดียวกันซ้ำ'); return }
+    try{ const small = f.type.startsWith('image/') ? await compressImage(f) : f
+      const preview = URL.createObjectURL(small)
+      setPhotos(prev=>[...prev, {file:small, preview, name:small.name, key}])
+    }catch{ setPhotos(prev=>[...prev,{file:f, preview:URL.createObjectURL(f), name:f.name, key}]) }
   }
   const startCam = async ()=>{
     setCamErr('')
@@ -250,21 +255,22 @@ function PhotoBox({photos, setPhotos}){
     const c = document.createElement('canvas'); c.width=v.videoWidth||1280; c.height=v.videoHeight||720
     c.getContext('2d').drawImage(v,0,0,c.width,c.height)
     c.toBlob(async b=>{
+      if(photos.length>=1){ alert('แนบได้ 1 รูปต่อเครื่องเท่านั้น - ถ้าจะเปลี่ยนรูป ให้กดลบรูปเดิมก่อน'); stopCam(); return }
       const f = new File([b],'camera.jpg',{type:'image/jpeg'})
       const small = await compressImage(f)
-      setPhotos(prev=>[...prev,{file:small, preview:URL.createObjectURL(small), name:'camera.jpg'}])
+      setPhotos(prev=>[...prev,{file:small, preview:URL.createObjectURL(small), name:'camera.jpg', key:'camera|'+Date.now()}])
       stopCam()
     },'image/jpeg',0.85)
   }
   useEffect(()=>()=>{ stream?.getTracks().forEach(t=>t.stop()) },[stream])
   return <div className="card">
-    <b>แนบรูปถ่าย (ใช้ได้จริงบนเว็บ https)</b>
-    <p className="small">กด ถ่ายรูปจากกล้อง จะเด้งไปแอปกล้องของเครื่องบนมือถือ หรือกด เลือกจากไฟล์รูป ก็ได้ รูปจะถูกอัปโหลดขึ้น Supabase Storage ตอนกดบันทึก</p>
+    <b>แนบรูปถ่าย - ได้ 1 รูปต่อเครื่อง ห้ามใช้รูปเดียวกันซ้ำ (ใช้ได้จริงบนเว็บ https)</b>
+    <p className="small">แนบได้แค่ 1 รูปต่อเครื่องเท่านั้น ถ้าเลือกรูปซ้ำกับรูปเดิมจะถูกบล็อก ถ้าจะเปลี่ยนรูปให้กดลบรูปเดิมก่อน แล้วค่อยแนบรูปใหม่ รูปจะถูกอัปโหลดขึ้น Supabase Storage ตอนกดบันทึก</p>
     <div className="row">
       <button type="button" className="btn btn-red" onClick={()=>fileRef.current?.click()}>เลือกจากไฟล์รูป</button>
       <button type="button" className="btn btn-ghost" onClick={camOn?stopCam:startCam}>{camOn?'ปิดกล้อง':'ถ่ายรูปจากกล้อง'}</button>
     </div>
-    <input ref={fileRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={e=>{addFiles(e.target.files); e.target.value=''}} />
+    <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={e=>{addFiles(e.target.files); e.target.value=''}} />
     {/* ปุ่มนี้คือตัวที่ทำให้มือถือเด้งไปแอปกล้องโดยตรง เสถียรสุด */}
     <label className="btn btn-line" style={{display:'block',textAlign:'center',marginTop:8,cursor:'pointer'}}>📷 เปิดแอปกล้องของเครื่อง (แนะนำบนมือถือ)
       <input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={e=>{addFiles(e.target.files); e.target.value=''}} />
@@ -326,6 +332,12 @@ export default function App(){
   const [fireRows,setFireRows] = useState([{}])
   const [fireAddCode,setFireAddCode] = useState('')
   const [pumpAddNo,setPumpAddNo] = useState('')
+  // --- รูปประจำแถว: 1 เครื่อง = 1 รูป ห้ามซ้ำ ---
+  const rowPhotoKey = (f)=> (f.name||'')+'|'+(f.size||0)+'|'+(f.lastModified||0)
+  const canAddRow = (rows)=>{ const last=rows[rows.length-1]; if(last && !last.photo && !last.photo_url){ alert('แถวที่ '+rows.length+' ยังไม่มีรูป - แนบรูปแถวนี้ก่อนถึงจะเพิ่มแถวที่ '+(rows.length+1)+' ได้'); return false } return true }
+  const onRowPhoto = async (rows,setRows,idx,file)=>{ if(!file) return; const key=rowPhotoKey(file); if(rows.some((x,i)=>i!==idx && x.photo && x.photo.key===key)){ alert('รูปนี้ใช้กับเครื่องอื่นไปแล้วครับ - ห้ามใช้รูปเดียวกันซ้ำ'); return } try{ const small = file.type.startsWith('image/') ? await compressImage(file) : file; const preview=URL.createObjectURL(small); setRows(prev=>prev.map((x,i)=>i===idx?{...x, photo:{file:small, preview, name:small.name, key}}:x)) }catch{ setRows(prev=>prev.map((x,i)=>i===idx?{...x, photo:{file, preview:URL.createObjectURL(file), name:file.name, key}}:x)) } }
+  const stripRowPhoto = (rows)=> (rows||[]).map(({photo, ...rest})=>({...rest, photo_name: photo?.name||rest.photo_name||'', photo_url: rest.photo_url||''}))
+  const uploadRowPhotos = async (rows)=>{ const out=[]; for(const r of rows){ let url=r.photo_url||''; if(r.photo?.file){ if(!hasSupabase){ url=r.photo.preview } else { try{ const name=`${Date.now()}-${uid()}-${r.photo.name||'photo.jpg'}`; const {error}=await supabase.storage.from('photos').upload(name, r.photo.file); if(error) throw error; const {data}=supabase.storage.from('photos').getPublicUrl(name); url=data.publicUrl }catch{ url=r.photo.preview } } } out.push({...r, photo_url:url}) } return out }
 
   const sys = SYSTEMS.find(s=>s.key===systemKey)
 
@@ -426,15 +438,22 @@ export default function App(){
       if(pumpRows.some(r=>!r.machineNo)) return setSaveErr('กรุณาเลือกเบอร์เครื่องให้ครบทุกแถว')
       if(pumpRows.some(r=>!r.control||!r.heat||!r.vibration)) return setSaveErr('กรุณาเลือก ชุดคอนโทรล / ความร้อน / สั่นสะเทือน ให้ครบทุกแถว')
       if(sys.kind==='fan' && pumpRows.some(r=>!r.belt||!r.filter)) return setSaveErr('กรุณาเลือก สายพาน / ฟิลเตอร์ ให้ครบทุกแถว')
+      if(pumpRows.some(r=>!r.photo && !r.photo_url)) return setSaveErr('ทุกเครื่องต้องมีรูป 1 รูป - แนบรูปให้ครบทุกแถวก่อนบันทึก')
     }
     if(sys.kind==='fire'){
       if(!month) return setSaveErr('กรุณาเลือกประจำเดือน')
       if(fireRows.some(r=>!r.code)) return setSaveErr('กรุณาเลือก Code ให้ครบทุกแถว')
       if(fireRows.some(r=>!r.result)) return setSaveErr('กรุณาเลือกผล / หรือ x ให้ครบทุกแถว')
+      if(fireRows.some(r=>!r.photo && !r.photo_url)) return setSaveErr('ทุกจุดต้องมีรูป 1 รูป - แนบรูปให้ครบทุกแถวก่อนบันทึก')
     }
-    let photo_urls=[]
-    try{ photo_urls = await uploadPhotos() }catch(err){ return setSaveErr(err.message) }
-    const payload = {kind:sys.kind, date, month, inspector, checker, project, location, model, ctCount, design, reducer, belt, gear, fanInfo, coolingRes, rows: sys.kind==='fire'?fireRows:pumpRows, note, sig1, sig2, photo_urls}
+    let photo_urls=[]; let cleanPump=pumpRows, cleanFire=fireRows
+    try{
+      if(sys.kind==='pump'||sys.kind==='fan'){ cleanPump = await uploadRowPhotos(pumpRows); photo_urls = cleanPump.map(r=>r.photo_url||'').filter(Boolean) }
+      else if(sys.kind==='fire'){ cleanFire = await uploadRowPhotos(fireRows); photo_urls = cleanFire.map(r=>r.photo_url||'').filter(Boolean) }
+      else { photo_urls = await uploadPhotos() }
+    }catch(err){ return setSaveErr(err.message) }
+    const rowsForSave = sys.kind==='fire'?stripRowPhoto(cleanFire):(sys.kind==='cooling'?pumpRows:stripRowPhoto(cleanPump))
+    const payload = {kind:sys.kind, date, month, inspector, checker, project, location, model, ctCount, design, reducer, belt, gear, fanInfo, coolingRes, rows: rowsForSave, note, sig1, sig2, photo_urls}
     const {ok,bad} = countResults(payload)
     const rec = {id:uid(), system_key:sys.key, system_name:sys.name, date, month, inspector, checker, data:payload, photo_urls, ok_count:ok, bad_count:bad, created_at:new Date().toISOString()}
     let cloudOk = false
@@ -467,9 +486,9 @@ export default function App(){
           rows.push({วันที่:r.date, โครงการ:d.project, สถานที่:d.location, รุ่น:d.model, 'จำนวน C/T':d.ctCount, 'Water Flow':d.design?.flow, 'Hot':d.design?.hot, 'Cold':d.design?.cold, 'Wet Bulb':d.design?.wet, Reducer:d.reducer, ผู้ตรวจ:r.inspector, ผู้ตรวจสอบ:r.checker, ปกติ:r.ok_count, ไม่ปกติ:r.bad_count, รูป:(r.photo_urls||[]).join(' | '), หมายเหตุ:d.note})
           Object.entries(d.coolingRes||{}).forEach(([label,val])=>rows.push({วันที่:r.date, โครงการ:d.project, รายการ:label, ผล:val, ผู้ตรวจ:r.inspector}))
         } else if(d.kind==='fire'){
-          (d.rows||[]).forEach(row=>rows.push({วันที่:r.date, ประจำเดือน:r.month, No:row.no, Description:row.description, Code:row.code, LOCATION:row.location, Room:row.room, ผล:row.result==='ปกติ'?'/':'x', หมายเหตุ:row.note, ผู้ตรวจ:r.inspector, ผู้ตรวจสอบ:r.checker, รูป:(r.photo_urls||[]).join(' | ')}))
+          (d.rows||[]).forEach(row=>rows.push({วันที่:r.date, ประจำเดือน:r.month, No:row.no, Description:row.description, Code:row.code, LOCATION:row.location, Room:row.room, ผล:row.result==='ปกติ'?'/':'x', หมายเหตุ:row.note, ผู้ตรวจ:r.inspector, ผู้ตรวจสอบ:r.checker, รูป:(row.photo_url||'')}))
         } else {
-          (d.rows||[]).forEach(row=>rows.push({วันที่:r.date, เบอร์เครื่อง:row.machineNo, รุ่น:row.model, สถานที่:row.location, KW:row.kw, 'VOLT R':row.voltR, 'VOLT S':row.voltS, 'VOLT T':row.voltT, 'ชุดคอนโทรล':row.control, 'กระแส R':row.ampR, 'กระแส S':row.ampS, 'กระแส T':row.ampT, ความร้อน:row.heat, สั่นสะเทือน:row.vibration, หมายเหตุ:row.note, ผู้ตรวจ:r.inspector, รูป:(r.photo_urls||[]).join(' | ')}))
+          (d.rows||[]).forEach(row=>rows.push({วันที่:r.date, เบอร์เครื่อง:row.machineNo, รุ่น:row.model, สถานที่:row.location, KW:row.kw, 'VOLT R':row.voltR, 'VOLT S':row.voltS, 'VOLT T':row.voltT, 'ชุดคอนโทรล':row.control, 'กระแส R':row.ampR, 'กระแส S':row.ampS, 'กระแส T':row.ampT, ความร้อน:row.heat, สั่นสะเทือน:row.vibration, หมายเหตุ:row.note, ผู้ตรวจ:r.inspector, รูป:(row.photo_url||'')}))
         }
       })
       const ws = XLSX.utils.json_to_sheet(rows.length?rows:[{ข้อความ:'ไม่มีข้อมูล'}])
@@ -545,6 +564,8 @@ export default function App(){
           <div className="field"><label>ผล</label><select value={filterResult} onChange={e=>setFilterResult(e.target.value)}><option value="all">ทั้งหมด</option><option value="ok">ปกติทั้งหมด</option><option value="bad">มีไม่ปกติ</option></select></div>
         </div>
         <button className="btn btn-red" style={{width:'100%'}} onClick={exportExcel}>ส่งออก Excel (.xlsx) แยกชีตตามระบบ</button>
+        <button className="btn btn-line" style={{width:'100%',marginTop:8,background:'#fff1f2',borderColor:'#c8102e',color:'#c8102e'}} onClick={async()=>{ if(!confirm('ลบข้อมูลทั้งหมดที่เห็นในหน้านี้เลยใช่ไหม? (ข้อมูลเทสทั้งหมดจะหาย)')) return; if(!confirm('ยืนยันอีกครั้ง - ลบทั้งหมดจริงๆ ใช่ไหม? กู้คืนไม่ได้นะครับ')) return; const ids=list.map(r=>r.id); if(hasSupabase){ for(const id of ids){ await supabase.from('inspections').delete().eq('id', id) } } const all=JSON.parse(localStorage.getItem('supreme_records')||'[]').filter(x=>!ids.includes(x.id)); localStorage.setItem('supreme_records', JSON.stringify(all)); await loadRecords(); alert('ลบข้อมูลทั้งหมดแล้วครับ') }}>🗑️ ลบข้อมูลทั้งหมดในหน้านี้ (เทส)</button>
+        <button className="btn btn-line" style={{width:'100%',marginTop:8}} onClick={()=>{ if(!confirm('ล้างข้อมูลที่ค้างในเครื่องนี้ทั้งหมดเลยใช่ไหม? (ใช้ตอนกดลบแล้วเลขไม่ลด)')) return; localStorage.removeItem('supreme_records'); loadRecords(); alert('ล้างข้อมูลในเครื่องนี้แล้วครับ - กลับไปหน้าหลักเลขต้องเป็น 0') }}>🧹 ล้างข้อมูลที่ค้างในเครื่องนี้ (ถ้ากดลบแล้วเลขไม่ลด)</button>
         {msg && <div className="okbox">{msg}</div>}
       </div>
       {list.length===0 && <div className="card">ยังไม่มีประวัติ หรือไม่ตรงกับตัวกรอง</div>}
@@ -560,7 +581,7 @@ export default function App(){
             <button className="btn btn-line" onClick={async()=>{
               if(!confirm('ลบรายการนี้?')) return
               if(hasSupabase) await supabase.from('inspections').delete().eq('id', r.id)
-              else { const all=JSON.parse(localStorage.getItem('supreme_records')||'[]').filter(x=>x.id!==r.id); localStorage.setItem('supreme_records', JSON.stringify(all)) }
+              const all=JSON.parse(localStorage.getItem('supreme_records')||'[]').filter(x=>x.id!==r.id); localStorage.setItem('supreme_records', JSON.stringify(all))
               loadRecords()
             }}>ลบ</button>
           </div>
@@ -630,8 +651,8 @@ export default function App(){
 
     {(sys.kind==='pump'||sys.kind==='fan') && <div className="card">
       <h3>รายการเครื่อง</h3>
-      <div className="field"><label>เพิ่มเครื่องจากรายการ (แสดงเฉพาะเบอร์เครื่อง)</label><div style={{display:'flex',gap:8}}><select value={pumpAddNo} onChange={e=>setPumpAddNo(e.target.value)} style={{flex:1,padding:12,borderRadius:10,border:'1px solid #e2e8f0'}}><option value="">-- เลือกเบอร์เครื่อง --</option>{(PUMP_PRESETS[systemKey]||[]).map(p=><option key={p.machineNo} value={p.machineNo}>{p.machineNo}</option>)}</select><button type="button" className="btn btn-red" onClick={()=>{ if(!pumpAddNo) return; const pre=(PUMP_PRESETS[systemKey]||[]).find(p=>p.machineNo===pumpAddNo); setPumpRows(prev=>[...prev,{id:uid(), machineNo:pumpAddNo, model:pre?.model||'', location:pre?.location||'', kw:pre?.kw||'', note:pre?.note||''}]); setPumpAddNo('') }}>+ เพิ่มแถว</button></div></div>
-      <div className="tablewrap"><table><thead><tr><th>เบอร์เครื่อง *</th><th>รุ่น</th><th>สถานที่</th><th>KW</th><th>VOLT R/S/T</th><th>ชุดคอนโทรล *</th><th>กระแส R/S/T</th><th>ความร้อน *</th><th>สั่นสะเทือน *</th>{sys.kind==='fan'&&<><th>สายพาน *</th><th>ฟิลเตอร์ *</th></>}<th>หมายเหตุ</th><th></th></tr></thead>
+      <div className="field"><label>เพิ่มเครื่องจากรายการ (แสดงเฉพาะเบอร์เครื่อง)</label><div style={{display:'flex',gap:8}}><select value={pumpAddNo} onChange={e=>setPumpAddNo(e.target.value)} style={{flex:1,padding:12,borderRadius:10,border:'1px solid #e2e8f0'}}><option value="">-- เลือกเบอร์เครื่อง --</option>{(PUMP_PRESETS[systemKey]||[]).map(p=><option key={p.machineNo} value={p.machineNo}>{p.machineNo}</option>)}</select><button type="button" className="btn btn-red" onClick={()=>{ if(!pumpAddNo) return; if(!canAddRow(pumpRows)) return; const pre=(PUMP_PRESETS[systemKey]||[]).find(p=>p.machineNo===pumpAddNo); setPumpRows(prev=>[...prev,{id:uid(), machineNo:pumpAddNo, model:pre?.model||'', location:pre?.location||'', kw:pre?.kw||'', note:pre?.note||''}]); setPumpAddNo('') }}>+ เพิ่มแถว</button></div></div>
+      <div className="tablewrap"><table><thead><tr><th>เบอร์เครื่อง *</th><th>รุ่น</th><th>สถานที่</th><th>KW</th><th>VOLT R/S/T</th><th>ชุดคอนโทรล *</th><th>กระแส R/S/T</th><th>ความร้อน *</th><th>สั่นสะเทือน *</th>{sys.kind==='fan'&&<><th>สายพาน *</th><th>ฟิลเตอร์ *</th></>}<th>หมายเหตุ</th><th>รูป *</th><th></th></tr></thead>
       <tbody>{pumpRows.map((r,idx)=><tr key={r.id||idx}>
         <td><select value={r.machineNo||''} onChange={e=>{ const v=e.target.value; const pre=(PUMP_PRESETS[systemKey]||[]).find(p=>p.machineNo===v); setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x, machineNo:v, model:pre?.model||x.model||'', location:pre?.location||x.location||'', kw:pre?.kw||x.kw||''}:x)) }}><option value="">-- เลือก --</option>{(PUMP_PRESETS[systemKey]||[]).map(p=><option key={p.machineNo} value={p.machineNo}>{p.machineNo}</option>)}</select>{r.machineNo==='__custom' && <input placeholder="กรอกเบอร์เอง" onChange={e=>setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x, machineNo:e.target.value}:x))} />}</td>
         <td><input value={r.model||''} onChange={e=>setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x,model:e.target.value}:x))} /></td>
@@ -644,26 +665,27 @@ export default function App(){
         <td><select value={r.vibration||''} onChange={e=>setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x,vibration:e.target.value}:x))}><option value="">--</option><option>ปกติ</option><option>สั่นเล็กน้อย</option><option>มาก</option></select></td>
         {sys.kind==='fan'&&<><td><select value={r.belt||''} onChange={e=>setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x,belt:e.target.value}:x))}><option value="">--</option><option>ปกติ</option><option>ไม่ปกติ</option></select></td><td><select value={r.filter||''} onChange={e=>setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x,filter:e.target.value}:x))}><option value="">--</option><option>ปกติ</option><option>สกปรกควรทำความสะอาด</option><option>ควรเปลี่ยน</option></select></td></>}
         <td><input value={r.note||''} onChange={e=>setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x,note:e.target.value}:x))} /></td>
-        <td><button type="button" className="btn btn-line" onClick={()=>setPumpRows(prev=>prev.length<=1?prev:prev.filter((_,i)=>i!==idx))}>ลบ</button></td>
+        <td>{r.photo||r.photo_url ? <div style={{position:'relative',width:70}}><img src={r.photo?r.photo.preview:r.photo_url} alt="" style={{width:70,height:52,objectFit:'cover',borderRadius:8}} /><button type="button" onClick={()=>setPumpRows(prev=>prev.map((x,i)=>i===idx?{...x, photo:null, photo_url:''}:x))} style={{position:'absolute',top:-6,right:-6,background:'#c8102e',color:'#fff',border:'none',borderRadius:'50%',width:22,height:22,cursor:'pointer'}}>✕</button></div> : <div style={{display:'flex',flexDirection:'column',gap:4}}><label className="btn btn-line" style={{cursor:'pointer',whiteSpace:'nowrap',textAlign:'center'}}>🖼️ เลือกไฟล์<input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{onRowPhoto(pumpRows,setPumpRows,idx,e.target.files?.[0]); e.target.value=''}} /></label><label className="btn btn-red" style={{cursor:'pointer',whiteSpace:'nowrap',textAlign:'center'}}>📷 ถ่ายจากกล้อง<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={e=>{onRowPhoto(pumpRows,setPumpRows,idx,e.target.files?.[0]); e.target.value=''}} /></label></div>}</td><td><button type="button" className="btn btn-line" onClick={()=>setPumpRows(prev=>prev.length<=1?prev:prev.filter((_,i)=>i!==idx))}>ลบ</button></td>
       </tr>)}</tbody></table></div>
-      <button type="button" className="btn btn-ghost" style={{marginTop:10,width:'100%'}} onClick={()=>setPumpRows(prev=>[...prev,{id:uid()}])}>+ เพิ่มแถวเครื่องเปล่า</button>
+      <button type="button" className="btn btn-ghost" style={{marginTop:10,width:'100%'}} onClick={()=>{ if(!canAddRow(pumpRows)) return; setPumpRows(prev=>[...prev,{id:uid()}]) }}>+ เพิ่มแถวเครื่องเปล่า</button>
     </div>}
 
     {sys.kind==='fire' && <div className="card">
       <h3>ตารางตรวจ 98 จุด</h3><p className="small">/ = ปกติ , x = ไม่ปกติ</p>
-      <div className="field"><label>เพิ่มจุดจากรายการ - มีทั้งหมด 98 Code (G01 ถึง EF 1204) - พิมพ์ค้นหาในช่องข้างล่าง หรือแตะชื่อในลิสต์ข้างล่าง - มี 98 Code</label><div style={{display:'flex',gap:8}}><div style={{flex:1}}><input value={fireAddCode} onChange={e=>setFireAddCode(e.target.value)} placeholder="พิมพ์ค้นหา เช่น G02 หรือ 1204 หรือ SE-ED - มี 98 Code" style={{width:'100%',padding:12,borderRadius:10,border:'1px solid #e2e8f0',background:'#fff'}} /><div style={{maxHeight:220,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:10,marginTop:6,background:'#fff'}}>{FIRE_PRESETS.filter(p=>{const q=(fireAddCode||'').trim().toUpperCase(); if(!q) return true; return p.code.includes(q)||p.location.toUpperCase().includes(q)||p.room.toUpperCase().includes(q)||p.description.toUpperCase().includes(q)}).map(p=><button key={p.code} type="button" onClick={()=>setFireAddCode(p.code)} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:'none',borderBottom:'1px solid #f1f5f9',background:fireAddCode===p.code?'#fee2e2':'#fff',cursor:'pointer',fontSize:15}}>{p.code} - {p.description} - {p.location} {p.room}</button>)}</div><div className="small">แตะที่ชื่อในลิสต์ข้างบนนี้ได้เลย ไม่ต้องพิมพ์ให้ครบก็ได้ พิมพ์แค่ G0 ก็เห็น G01-G05 แล้ว</div></div><button type="button" className="btn btn-red" onClick={()=>{ const code=(fireAddCode||'').trim().toUpperCase(); if(!code) return; const pre=FIRE_PRESETS.find(p=>(p.code||'').trim().toUpperCase()===code); setFireRows(prev=>[...prev,{id:uid(), no:pre?pre.no:'', description:pre?pre.description:'', code:code, location:pre?pre.location:'', room:pre?pre.room:''}]); setFireAddCode('') }}>+ เพิ่มแถว</button></div></div>
-      <div className="tablewrap"><table><thead><tr><th>No.</th><th style={{minWidth:200}}>Description</th><th style={{minWidth:200}}>Code *</th><th style={{minWidth:200}}>LOCATION</th><th style={{minWidth:200}}>Room</th><th>ปกติ (/)</th><th>ไม่ปกติ (x)</th><th>หมายเหตุ</th><th></th></tr></thead>
+      <div className="field"><label>เพิ่มจุดจากรายการ - มีทั้งหมด 98 Code (G01 ถึง EF 1204) - พิมพ์ตัวเลขหรือรหัสในช่อง - พิมพ์แล้วลิสต์จะขึ้นมาให้เลือก - มี 98 Code</label><div style={{display:'flex',gap:8}}><div style={{flex:1}}><input value={fireAddCode} onChange={e=>setFireAddCode(e.target.value)} placeholder="พิมพ์ค้นหา เช่น G02 หรือ 1204 หรือ SE-ED - มี 98 Code" style={{width:'100%',padding:12,borderRadius:10,border:'1px solid #e2e8f0',background:'#fff'}} />{(fireAddCode||'').trim() ? <div style={{maxHeight:220,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:10,marginTop:6,background:'#fff'}}>{FIRE_PRESETS.filter(p=>{const q=(fireAddCode||'').trim().toUpperCase(); if(!q) return true; return p.code.includes(q)||p.location.toUpperCase().includes(q)||p.room.toUpperCase().includes(q)||p.description.toUpperCase().includes(q)}).map(p=><button key={p.code} type="button" onClick={()=>setFireAddCode(p.code)} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:'none',borderBottom:'1px solid #f1f5f9',background:fireAddCode===p.code?'#fee2e2':'#fff',cursor:'pointer',fontSize:15}}>{p.code} - {p.description} - {p.location} {p.room}</button>)}</div> : null}<div className="small">พิมพ์ตัวเลขหรือรหัสในช่องข้างบน ลิสต์จะขึ้นมาให้เลือกเอง ไม่ต้องโชว์ค้างไว้แล้ว - พิมพ์แค่ G0 ก็เห็น G01-G05 แล้ว</div></div><button type="button" className="btn btn-red" onClick={()=>{ const code=(fireAddCode||'').trim().toUpperCase(); if(!code) return; if(!canAddRow(fireRows)) return; const pre=FIRE_PRESETS.find(p=>(p.code||'').trim().toUpperCase()===code); setFireRows(prev=>[...prev,{id:uid(), no:pre?pre.no:'', description:pre?pre.description:'', code:code, location:pre?pre.location:'', room:pre?pre.room:''}]); setFireAddCode('') }}>+ เพิ่มแถว</button></div></div>
+      <div className="tablewrap"><table><thead><tr><th>No.</th><th style={{minWidth:200}}>Description</th><th style={{minWidth:200}}>Code *</th><th style={{minWidth:200}}>LOCATION</th><th style={{minWidth:200}}>Room</th><th>ปกติ (/)</th><th>ไม่ปกติ (x)</th><th>หมายเหตุ</th><th>รูป *</th><th></th></tr></thead>
       <tbody>{fireRows.map((r,idx)=><tr key={r.id||idx}><td>{idx+1}</td><td><input value={r.description||''} onChange={e=>setFireRows(prev=>prev.map((x,i)=>i===idx?{...x,description:e.target.value}:x))} /></td>
         <td style={{minWidth:200}}><input value={r.code||''} onChange={e=>{ const v=e.target.value; const pre=FIRE_PRESETS.find(p=>(p.code||'').trim().toUpperCase()===(v||'').trim().toUpperCase()); setFireRows(prev=>prev.map((x,i)=>i===idx?{...x, code:v, description:pre?.description||x.description||'', location:pre?.location||x.location||'', room:pre?.room||x.room||'', no:pre?.no||x.no}:x)) }} placeholder="พิมพ์ Code" style={{width:200,minWidth:200,padding:8,borderRadius:8,border:'1px solid #e2e8f0',background:'#fff'}} /></td>
         <td><input value={r.location||''} onChange={e=>setFireRows(prev=>prev.map((x,i)=>i===idx?{...x,location:e.target.value}:x))} /></td><td><input value={r.room||''} onChange={e=>setFireRows(prev=>prev.map((x,i)=>i===idx?{...x,room:e.target.value}:x))} /></td>
         <td><button type="button" className={r.result==='ปกติ'?'btn btn-green':'btn btn-ghost'} onClick={()=>setFireRows(prev=>prev.map((x,i)=>i===idx?{...x,result:'ปกติ'}:x))}>/</button></td>
         <td><button type="button" className={r.result==='ไม่ปกติ'?'btn btn-red':'btn btn-ghost'} onClick={()=>setFireRows(prev=>prev.map((x,i)=>i===idx?{...x,result:'ไม่ปกติ'}:x))}>x</button></td>
         <td><input value={r.note||''} onChange={e=>setFireRows(prev=>prev.map((x,i)=>i===idx?{...x,note:e.target.value}:x))} /></td>
-        <td><button type="button" className="btn btn-line" onClick={()=>setFireRows(prev=>prev.length<=1?prev:prev.filter((_,i)=>i!==idx))}>ลบ</button></td></tr>)}</tbody></table></div>
-      <button type="button" className="btn btn-ghost" style={{marginTop:10,width:'100%'}} onClick={()=>setFireRows(prev=>[...prev,{id:uid()}])}>+ เพิ่มแถวจุดเปล่า</button>
+        <td>{r.photo||r.photo_url ? <div style={{position:'relative',width:70}}><img src={r.photo?r.photo.preview:r.photo_url} alt="" style={{width:70,height:52,objectFit:'cover',borderRadius:8}} /><button type="button" onClick={()=>setFireRows(prev=>prev.map((x,i)=>i===idx?{...x, photo:null, photo_url:''}:x))} style={{position:'absolute',top:-6,right:-6,background:'#c8102e',color:'#fff',border:'none',borderRadius:'50%',width:22,height:22,cursor:'pointer'}}>✕</button></div> : <div style={{display:'flex',flexDirection:'column',gap:4}}><label className="btn btn-line" style={{cursor:'pointer',whiteSpace:'nowrap',textAlign:'center'}}>🖼️ เลือกไฟล์<input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{onRowPhoto(fireRows,setFireRows,idx,e.target.files?.[0]); e.target.value=''}} /></label><label className="btn btn-red" style={{cursor:'pointer',whiteSpace:'nowrap',textAlign:'center'}}>📷 ถ่ายจากกล้อง<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={e=>{onRowPhoto(fireRows,setFireRows,idx,e.target.files?.[0]); e.target.value=''}} /></label></div>}</td><td><button type="button" className="btn btn-line" onClick={()=>setFireRows(prev=>prev.length<=1?prev:prev.filter((_,i)=>i!==idx))}>ลบ</button></td></tr>)}</tbody></table></div>
+      <button type="button" className="btn btn-ghost" style={{marginTop:10,width:'100%'}} onClick={()=>{ if(!canAddRow(fireRows)) return; setFireRows(prev=>[...prev,{id:uid()}]) }}>+ เพิ่มแถวจุดเปล่า</button>
     </div>}
 
-    <PhotoBox photos={photos} setPhotos={setPhotos} />
+    {sys.kind==='cooling' && <PhotoBox photos={photos} setPhotos={setPhotos} />}
+    {sys.kind!=='cooling' && <div className="card"><b>รูปประจำเครื่อง - เลือกไฟล์หรือถ่ายจากกล้อง ในตารางแถวของเครื่องนั้นๆ</b><p className="small">แถวที่ 1 ต้องแนบรูปก่อนถึงจะเพิ่มแถวที่ 2 ได้ แนบรูปแถวที่ 2 แล้วถึงจะเพิ่มแถวที่ 3 ได้ - 1 เครื่องต่อ 1 รูป ห้ามใช้รูปเดียวกันซ้ำ</p></div>}
     <div className="card">
       <div className="field"><label>หมายเหตุรวม</label><textarea rows={3} value={note} onChange={e=>setNote(e.target.value)} placeholder="ข้อที่ต้องแก้ไข / หมายเหตุ" /></div>
       <SigPad label="ลายเซ็นผู้ตรวจ *" value={sig1} onChange={setSig1} />
